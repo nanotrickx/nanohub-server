@@ -4,6 +4,7 @@ import { EventsGateway } from '../events/events.gateway';
 import * as http from 'http';
 import * as https from 'https';
 import * as os from 'os';
+import * as dgram from 'dgram';
 import * as dns from 'dns';
 import { URL } from 'url';
 
@@ -62,8 +63,20 @@ export class Esp32BridgeService implements OnModuleInit, OnModuleDestroy {
     this.state.esp32_url = this.esp32Url;
   }
 
-  onModuleInit() {
+  async onModuleInit() {
     this.logger.log(`Initialized ESP32 Bridge Service. Configured Target: ${this.esp32Url}`);
+
+    // If using .local, perform an immediate UDP mDNS probe before first sync
+    if (this.esp32Url.includes('.local')) {
+      const hostname = new URL(this.esp32Url).hostname;
+      const initialIp = await this.resolveMdnsViaUdp(hostname, 1000);
+      if (initialIp) {
+        this.resolvedIp = initialIp;
+        this.state.resolved_ip = initialIp;
+        this.logger.log(`[mDNS-BOOT] Pre-resolved ${hostname} -> ${initialIp}`);
+      }
+    }
+
     // Start background sync
     this.syncTimer = setInterval(() => this.syncHardware(), this.syncIntervalMs);
     // Initial immediate sync
@@ -93,6 +106,15 @@ export class Esp32BridgeService implements OnModuleInit, OnModuleDestroy {
     this.state.resolved_ip = null;
     this.logger.log(`Target ESP32 URL updated to: ${this.esp32Url}`);
     this.eventsGateway.broadcast(`[BRIDGE] Target URL updated to ${this.esp32Url}. Testing connection...`);
+
+    if (this.esp32Url.includes('.local')) {
+      const hostname = new URL(this.esp32Url).hostname;
+      const initialIp = await this.resolveMdnsViaUdp(hostname, 1000);
+      if (initialIp) {
+        this.resolvedIp = initialIp;
+        this.state.resolved_ip = initialIp;
+      }
+    }
 
     await this.syncHardware();
     return this.getState();
@@ -156,7 +178,7 @@ export class Esp32BridgeService implements OnModuleInit, OnModuleDestroy {
     } catch (err) {
       this.state.sync_errors++;
       const targetLabel = this.resolvedIp ? `${this.esp32Url} [${this.resolvedIp}]` : this.esp32Url;
-      
+
       if (this.state.esp32_online) {
         this.logger.warn(`Lost connection with ESP32 at ${targetLabel}: ${err.message}. Serving cached telemetry.`);
         this.eventsGateway.broadcast(`[BRIDGE] Warning: ESP32 at ${targetLabel} unreachable. Using cached telemetry.`);
@@ -164,7 +186,7 @@ export class Esp32BridgeService implements OnModuleInit, OnModuleDestroy {
       this.state.esp32_online = false;
 
       // Trigger self-healing auto-discovery if target is .local and errors accumulate
-      if (this.esp32Url.includes('.local') && this.state.sync_errors >= 2) {
+      if (this.esp32Url.includes('.local')) {
         this.triggerAutoDiscovery();
       }
 
@@ -186,30 +208,38 @@ export class Esp32BridgeService implements OnModuleInit, OnModuleDestroy {
     return this.rawRequest(pathWithQuery, options);
   }
 
-  private rawRequest(
+  private async rawRequest(
     pathWithQuery: string,
     options: { method?: string; body?: string; headers?: Record<string, string>; timeout?: number } = {},
   ): Promise<{ statusCode: number; body: string }> {
+    let targetUrl: URL;
+    try {
+      targetUrl = new URL(pathWithQuery, this.esp32Url);
+    } catch (err) {
+      throw new Error(`Invalid target URL: ${this.esp32Url} (${err.message})`);
+    }
+
+    const isLocalDomain = targetUrl.hostname.endsWith('.local');
+
+    // If target is a .local domain and we don't have resolvedIp yet, do a fast 500ms UDP query
+    if (isLocalDomain && !this.resolvedIp) {
+      const fastIp = await this.resolveMdnsViaUdp(targetUrl.hostname, 600);
+      if (fastIp) {
+        this.resolvedIp = fastIp;
+        this.state.resolved_ip = fastIp;
+      }
+    }
+
+    const connectHostname = (isLocalDomain && this.resolvedIp) ? this.resolvedIp : targetUrl.hostname;
+    const isHttps = targetUrl.protocol === 'https:';
+    const client = isHttps ? https : http;
+
+    const headers: Record<string, string> = { ...options.headers };
+    if (isLocalDomain && this.resolvedIp && !headers['Host'] && !headers['host']) {
+      headers['Host'] = targetUrl.host;
+    }
+
     return new Promise((resolve, reject) => {
-      let targetUrl: URL;
-      try {
-        targetUrl = new URL(pathWithQuery, this.esp32Url);
-      } catch (err) {
-        return reject(new Error(`Invalid target URL: ${this.esp32Url} (${err.message})`));
-      }
-
-      const isHttps = targetUrl.protocol === 'https:';
-      const client = isHttps ? https : http;
-
-      // If we resolved an IP for a .local domain, connect to the IP directly while maintaining the Host header
-      const isLocalDomain = targetUrl.hostname.endsWith('.local');
-      const connectHostname = (isLocalDomain && this.resolvedIp) ? this.resolvedIp : targetUrl.hostname;
-
-      const headers: Record<string, string> = { ...options.headers };
-      if (isLocalDomain && this.resolvedIp && !headers['Host'] && !headers['host']) {
-        headers['Host'] = targetUrl.host;
-      }
-
       const reqOpts: http.RequestOptions = {
         protocol: targetUrl.protocol,
         hostname: connectHostname,
@@ -246,25 +276,108 @@ export class Esp32BridgeService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * RFC 6762 Native Multicast DNS Resolver via UDP Socket (224.0.0.251:5353)
+   * Bypasses OS getaddrinfo, glibc, and avahi-daemon entirely.
+   * Works on any Linux/Mac/Windows host to resolve ESP32 IP directly.
+   */
+  private resolveMdnsViaUdp(hostname: string, timeoutMs = 1200): Promise<string | null> {
+    return new Promise((resolve) => {
+      let socket: dgram.Socket | null = null;
+      let finished = false;
+
+      const finish = (result: string | null) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        try {
+          if (socket) socket.close();
+        } catch {}
+        resolve(result);
+      };
+
+      const timer = setTimeout(() => finish(null), timeoutMs);
+
+      try {
+        socket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+        socket.on('error', () => finish(null));
+
+        socket.on('message', (msg, rinfo) => {
+          // When the ESP32 responds to the query, rinfo.address is its active IPv4 address
+          if (rinfo && rinfo.address) {
+            finish(rinfo.address);
+          }
+        });
+
+        socket.bind(0, () => {
+          try {
+            socket!.addMembership('224.0.0.251');
+
+            // Construct DNS Question for hostname.local (Type A = 1, Class IN = 1)
+            const cleanHost = hostname.replace(/\.local$/i, '');
+            const parts = cleanHost.split('.');
+            const qname: number[] = [];
+            for (const p of parts) {
+              qname.push(p.length);
+              for (let i = 0; i < p.length; i++) qname.push(p.charCodeAt(i));
+            }
+            qname.push(5); // 'local'
+            for (let i = 0; i < 5; i++) qname.push('local'.charCodeAt(i));
+            qname.push(0); // null terminator
+
+            const header = Buffer.from([0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
+            const question = Buffer.concat([Buffer.from(qname), Buffer.from([0, 1, 128, 1])]); // 128 = unicast response requested
+            const query = Buffer.concat([header, question]);
+
+            socket!.send(query, 0, query.length, 5353, '224.0.0.251', (err) => {
+              if (err) finish(null);
+            });
+          } catch {
+            finish(null);
+          }
+        });
+      } catch {
+        finish(null);
+      }
+    });
+  }
+
+  /**
    * Autonomous Subnet Auto-Discovery Fallback
    * Detects local private subnets and probes for ESP32 Universal Home Hub signature.
    */
   private async triggerAutoDiscovery(): Promise<void> {
     const now = Date.now();
-    // Debounce discovery to at most once every 10 seconds
-    if (this.isDiscovering || now - this.lastDiscoveryTime < 10000) {
+    // Debounce discovery to at most once every 6 seconds
+    if (this.isDiscovering || now - this.lastDiscoveryTime < 6000) {
       return;
     }
 
     this.isDiscovering = true;
     this.lastDiscoveryTime = now;
-    this.logger.log(`[DISCOVERY] Initiating self-healing subnet scan for ${this.esp32Url}...`);
+    this.logger.log(`[DISCOVERY] Initiating self-healing scan for ${this.esp32Url}...`);
 
     try {
-      // 1. Try quick IPv4 DNS lookup first
       const hostname = new URL(this.esp32Url).hostname;
+
+      // 1. Direct RFC 6762 Multicast DNS Query via UDP (bypasses OS DNS entirely)
+      const udpIp = await this.resolveMdnsViaUdp(hostname, 1200);
+      if (udpIp) {
+        const verified = await this.verifyHubEndpoint(udpIp);
+        if (verified) {
+          this.resolvedIp = udpIp;
+          this.state.resolved_ip = udpIp;
+          this.logger.log(`[DISCOVERY] Native UDP mDNS resolved ${hostname} -> ${udpIp}`);
+          this.isDiscovering = false;
+          await this.syncHardware();
+          return;
+        }
+      }
+
+      // 2. Fast OS DNS lookup with strict 500ms timeout
       const dnsIp = await new Promise<string | null>((resolve) => {
+        const timer = setTimeout(() => resolve(null), 500);
         dns.lookup(hostname, { family: 4 }, (err, address) => {
+          clearTimeout(timer);
           if (!err && address) resolve(address);
           else resolve(null);
         });
@@ -275,14 +388,14 @@ export class Esp32BridgeService implements OnModuleInit, OnModuleDestroy {
         if (verified) {
           this.resolvedIp = dnsIp;
           this.state.resolved_ip = dnsIp;
-          this.logger.log(`[DISCOVERY] mDNS resolved ${hostname} -> ${dnsIp}`);
+          this.logger.log(`[DISCOVERY] OS DNS resolved ${hostname} -> ${dnsIp}`);
           this.isDiscovering = false;
           await this.syncHardware();
           return;
         }
       }
 
-      // 2. Discover local active IPv4 subnets
+      // 3. Sweep local active IPv4 subnets
       const subnets = this.getLocalSubnets();
       this.logger.debug(`[DISCOVERY] Scanning subnets: ${subnets.join(', ')}`);
 
@@ -291,7 +404,7 @@ export class Esp32BridgeService implements OnModuleInit, OnModuleDestroy {
         if (foundIp) {
           this.resolvedIp = foundIp;
           this.state.resolved_ip = foundIp;
-          this.logger.log(`[DISCOVERY] Successfully auto-discovered ESP32 Hub at IP: ${foundIp} (Persistent host: ${this.esp32Url})`);
+          this.logger.log(`[DISCOVERY] Successfully auto-discovered ESP32 Hub at IP: ${foundIp} (Host: ${this.esp32Url})`);
           this.eventsGateway.broadcast(`[DISCOVERY] Auto-discovered ESP32 Hub at ${foundIp}`);
           this.isDiscovering = false;
           await this.syncHardware();
@@ -327,6 +440,12 @@ export class Esp32BridgeService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
+    // Always include common smart home subnets if interfaces are virtualized or behind Docker bridge
+    subnets.add('192.168.31');
+    subnets.add('192.168.1');
+    subnets.add('192.168.0');
+    subnets.add('192.168.2');
+
     return Array.from(subnets);
   }
 
@@ -348,26 +467,36 @@ export class Esp32BridgeService implements OnModuleInit, OnModuleDestroy {
 
   private verifyHubEndpoint(ip: string): Promise<string | null> {
     return new Promise((resolve) => {
-      const req = http.get(`http://${ip}/api/status`, { timeout: 400, family: 4 }, (res) => {
+      let resolved = false;
+      const done = (val: string | null) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+        resolve(val);
+      };
+
+      const timer = setTimeout(() => done(null), 400);
+
+      const req = http.get(`http://${ip}/api/status`, { timeout: 350, family: 4 }, (res) => {
         let body = '';
         res.on('data', (chunk) => { body += chunk; });
         res.on('end', () => {
           try {
             if (res.statusCode === 200 && body.includes('"mains"') && body.includes('"outages"')) {
-              resolve(ip);
+              done(ip);
             } else {
-              resolve(null);
+              done(null);
             }
           } catch {
-            resolve(null);
+            done(null);
           }
         });
       });
 
-      req.on('error', () => resolve(null));
+      req.on('error', () => done(null));
       req.on('timeout', () => {
         req.destroy();
-        resolve(null);
+        done(null);
       });
     });
   }
