@@ -12,7 +12,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   const configService = app.get(ConfigService);
-  const port = configService.get<number>('app.port', 8080);
+  const port = configService.get<number>('app.port', 3333);
   const corsOrigin = configService.get<string>('app.corsOrigin', '*');
 
   // WebSocket Adapter (RFC 6455 over /ws)

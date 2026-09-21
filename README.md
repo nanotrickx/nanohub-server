@@ -68,7 +68,7 @@ npm test
 
 Open your browser and navigate to:
 ```
-http://localhost:8080/api/docs
+http://localhost:3333/api/docs
 ```
 Explore, test, and trigger all REST endpoints interactively directly from the Swagger UI!
 
@@ -79,10 +79,10 @@ Explore, test, and trigger all REST endpoints interactively directly from the Sw
 In your Cloudflare Zero Trust Tunnel configuration:
 1. **Public Hostname**: `nanohub.shopyworld.in`
 2. **Service Type**: `HTTP`
-3. **URL**: `localhost:8080` (or `127.0.0.1:8080`)
+3. **URL**: `localhost:3333` (or `127.0.0.1:3333`)
 
 Your mobile phone connects via HTTPS from anywhere in the world:
-`App (4G/5G) → Cloudflare (HTTPS) → PC NestJS Server (8080) → ESP32 Hardware (LAN)`
+`App (4G/5G) → Cloudflare (HTTPS) → PC NestJS Server (3333) → ESP32 Hardware (LAN)`
 
 ---
 
@@ -91,7 +91,7 @@ Your mobile phone connects via HTTPS from anywhere in the world:
 1. In the App, navigate to **Settings** (⚙️).
 2. Enter your Cloudflare domain or PC server address:
    - **From outside home (Cellular/Internet)**: `nanohub.shopyworld.in`
-   - **From home Wi-Fi**: `http://<YOUR_PC_IP>:8080`
+   - **From home Wi-Fi**: `http://<YOUR_PC_IP>:3333`
 3. Tap **Apply / Save**.
 
 ---
