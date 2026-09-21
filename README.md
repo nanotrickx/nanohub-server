@@ -77,7 +77,7 @@ Explore, test, and trigger all REST endpoints interactively directly from the Sw
 ## 🌐 Connecting Cloudflare Tunnel
 
 In your Cloudflare Zero Trust Tunnel configuration:
-1. **Public Hostname**: `thinai.shopyworld.in`
+1. **Public Hostname**: `nanohub.shopyworld.in`
 2. **Service Type**: `HTTP`
 3. **URL**: `localhost:8080` (or `127.0.0.1:8080`)
 
@@ -90,7 +90,7 @@ Your mobile phone connects via HTTPS from anywhere in the world:
 
 1. In the App, navigate to **Settings** (⚙️).
 2. Enter your Cloudflare domain or PC server address:
-   - **From outside home (Cellular/Internet)**: `thinai.shopyworld.in`
+   - **From outside home (Cellular/Internet)**: `nanohub.shopyworld.in`
    - **From home Wi-Fi**: `http://<YOUR_PC_IP>:8080`
 3. Tap **Apply / Save**.
 
