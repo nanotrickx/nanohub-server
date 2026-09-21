@@ -1,17 +1,19 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { StatusService } from './status.service';
-import { Esp32BridgeService } from '../esp32-bridge/esp32-bridge.service';
+import { DeviceShadowService } from '../device/device-shadow.service';
 
 describe('StatusService', () => {
   let service: StatusService;
-  let mockBridgeService: Partial<Esp32BridgeService>;
+  let mockShadowService: Partial<DeviceShadowService>;
 
   beforeEach(async () => {
-    mockBridgeService = {
-      getState: jest.fn().mockReturnValue({
+    mockShadowService = {
+      getShadow: jest.fn().mockReturnValue({
         mains: true,
         temp: 24.5,
+        temperature: 24.5,
         hum: 55.0,
+        humidity: 55.0,
         uptime_sec: 120,
         wifi_rssi: -50,
         outages: 1,
@@ -21,7 +23,6 @@ describe('StatusService', () => {
         esp32_url: 'http://192.168.1.150',
         esp32_online: true,
         last_sync: '2026-09-21T12:00:00.000Z',
-        sync_errors: 0,
       }),
     };
 
@@ -29,8 +30,8 @@ describe('StatusService', () => {
       providers: [
         StatusService,
         {
-          provide: Esp32BridgeService,
-          useValue: mockBridgeService,
+          provide: DeviceShadowService,
+          useValue: mockShadowService,
         },
       ],
     }).compile();

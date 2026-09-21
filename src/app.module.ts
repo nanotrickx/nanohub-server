@@ -7,6 +7,7 @@ import { StatusModule } from './modules/status/status.module';
 import { IrModule } from './modules/ir/ir.module';
 import { SystemModule } from './modules/system/system.module';
 import { SimulatorModule } from './modules/simulator/simulator.module';
+import { DeviceModule } from './modules/device/device.module';
 import { DashboardModule } from './modules/views/dashboard.module';
 
 @Module({
@@ -16,6 +17,7 @@ import { DashboardModule } from './modules/views/dashboard.module';
       load: [configuration],
     }),
     EventsModule,
+    DeviceModule,
     Esp32BridgeModule,
     StatusModule,
     IrModule,

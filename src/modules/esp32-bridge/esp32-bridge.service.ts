@@ -6,6 +6,7 @@ import * as https from 'https';
 import * as os from 'os';
 import * as dgram from 'dgram';
 import * as dns from 'dns';
+import { DeviceShadowService } from '../device/device-shadow.service';
 import { URL } from 'url';
 
 export interface BridgeState {
@@ -57,6 +58,7 @@ export class Esp32BridgeService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly configService: ConfigService,
     private readonly eventsGateway: EventsGateway,
+    private readonly deviceShadowService: DeviceShadowService,
   ) {
     this.esp32Url = this.configService.get<string>('app.esp32Url', 'http://homehub.local');
     this.syncIntervalMs = this.configService.get<number>('app.syncIntervalMs', 2500);
@@ -122,10 +124,16 @@ export class Esp32BridgeService implements OnModuleInit, OnModuleDestroy {
 
   updateStatePartial(partial: Partial<BridgeState>) {
     Object.assign(this.state, partial);
+    this.deviceShadowService.updateFromLanBridge(this.state);
   }
 
   async syncHardware(): Promise<void> {
     if (!this.esp32Url) return;
+
+    // If device is actively connected via outbound WebSocket tunnel, skip redundant HTTP polling
+    if (this.deviceShadowService.isTunnelActive()) {
+      return;
+    }
 
     try {
       const res = await this.rawRequest('/api/status', { timeout: 2500 });
@@ -172,6 +180,9 @@ export class Esp32BridgeService implements OnModuleInit, OnModuleDestroy {
         this.state.resolved_ip = this.resolvedIp;
         this.state.last_sync = new Date().toISOString();
         this.state.sync_errors = 0;
+
+        // Keep Digital Twin updated from LAN bridge
+        this.deviceShadowService.updateFromLanBridge(this.state);
       } else {
         throw new Error(`ESP32 returned HTTP ${res.statusCode}`);
       }
@@ -184,6 +195,9 @@ export class Esp32BridgeService implements OnModuleInit, OnModuleDestroy {
         this.eventsGateway.broadcast(`[BRIDGE] Warning: ESP32 at ${targetLabel} unreachable. Using cached telemetry.`);
       }
       this.state.esp32_online = false;
+
+      // Update shadow with offline state
+      this.deviceShadowService.updateFromLanBridge(this.state);
 
       // Trigger self-healing auto-discovery if target is .local and errors accumulate
       if (this.esp32Url.includes('.local')) {
