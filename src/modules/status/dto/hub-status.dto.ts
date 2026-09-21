@@ -37,6 +37,9 @@ export class HubStatusDto {
   @ApiProperty({ description: 'Target ESP32 URL', example: 'http://192.168.1.150' })
   esp32_url: string;
 
+  @ApiProperty({ description: 'Resolved physical IPv4 address if using mDNS or auto-discovery', example: '192.168.31.92', required: false, nullable: true })
+  resolved_ip?: string | null;
+
   @ApiProperty({ description: 'Whether connection with physical ESP32 is currently healthy', example: true })
   esp32_online: boolean;
 

@@ -25,6 +25,7 @@ export class StatusService {
       configured: bridgeState.configured,
       bridge_mode: bridgeState.bridge_mode,
       esp32_url: bridgeState.esp32_url,
+      resolved_ip: bridgeState.resolved_ip || null,
       esp32_online: bridgeState.esp32_online,
       last_sync: bridgeState.last_sync,
     };
