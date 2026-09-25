@@ -32,10 +32,11 @@ export class SystemService {
   }
 
   async configureHub(dto: HubConfigDto): Promise<{ status: string; message?: string }> {
+    const ssidLabel = dto.ssid || 'Sinric Pro Config';
     const state = this.bridgeService.getState();
     if (state.esp32_online) {
       try {
-        this.logger.log(`Relaying Wi-Fi credentials for SSID: "${dto.ssid}" to ESP32...`);
+        this.logger.log(`Relaying configuration for: "${ssidLabel}" to ESP32...`);
         const postData = new URLSearchParams(dto as any).toString();
         const res = await this.bridgeService.forwardRequest('/api/config', {
           method: 'POST',
@@ -43,7 +44,7 @@ export class SystemService {
           body: postData,
           timeout: 5000,
         });
-        this.eventsGateway.broadcast(`[CONFIG] Saved credentials for "${dto.ssid}" on ESP32`);
+        this.eventsGateway.broadcast(`[CONFIG] Saved configuration for "${ssidLabel}" on ESP32`);
         try {
           return JSON.parse(res.body);
         } catch {
@@ -54,7 +55,7 @@ export class SystemService {
       }
     }
 
-    this.eventsGateway.broadcast(`[CONFIG-SIM] Received configuration for SSID: "${dto.ssid}"`);
+    this.eventsGateway.broadcast(`[CONFIG-SIM] Received configuration for "${ssidLabel}"`);
     return { status: 'success', message: 'Simulated configuration stored' };
   }
 

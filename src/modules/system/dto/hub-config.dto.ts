@@ -2,10 +2,10 @@ import { ApiProperty } from '@nestjs/swagger';
 import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class HubConfigDto {
-  @ApiProperty({ description: 'Wi-Fi SSID name', example: 'HomeWiFi_2.4G' })
+  @ApiProperty({ description: 'Wi-Fi SSID name', example: 'HomeWiFi_2.4G', required: false })
   @IsString()
-  @IsNotEmpty()
-  ssid: string;
+  @IsOptional()
+  ssid?: string;
 
   @ApiProperty({ description: 'Wi-Fi WPA2 pre-shared key', example: 'SuperSecret123', required: false })
   @IsString()
