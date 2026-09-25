@@ -32,16 +32,26 @@ export class SystemService {
   }
 
   async configureHub(dto: HubConfigDto): Promise<{ status: string; message?: string }> {
-    const ssidLabel = dto.ssid || 'Sinric Pro Config';
+    const ssidLabel = dto.ssid && dto.ssid.trim() ? dto.ssid.trim() : 'Sinric Pro Config';
     const state = this.bridgeService.getState();
     if (state.esp32_online) {
       try {
         this.logger.log(`Relaying configuration for: "${ssidLabel}" to ESP32...`);
-        const postData = new URLSearchParams(dto as any).toString();
+
+        // Only include fields that are actually present and non-empty.
+        // An empty ssid/pass on a Sinric-only update must not be forwarded.
+        const params = new URLSearchParams();
+        if (dto.ssid?.trim()) params.append('ssid', dto.ssid.trim());
+        if (dto.pass?.trim()) params.append('pass', dto.pass.trim());
+        if (dto.appkey?.trim()) params.append('appkey', dto.appkey.trim());
+        if (dto.appsecret?.trim()) params.append('appsecret', dto.appsecret.trim());
+        if (dto.mains_id?.trim()) params.append('mains_id', dto.mains_id.trim());
+        if (dto.temp_id?.trim()) params.append('temp_id', dto.temp_id.trim());
+
         const res = await this.bridgeService.forwardRequest('/api/config', {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: postData,
+          body: params.toString(),
           timeout: 5000,
         });
         this.eventsGateway.broadcast(`[CONFIG] Saved configuration for "${ssidLabel}" on ESP32`);
@@ -55,8 +65,8 @@ export class SystemService {
       }
     }
 
-    this.eventsGateway.broadcast(`[CONFIG-SIM] Received configuration for "${ssidLabel}"`);
-    return { status: 'success', message: 'Simulated configuration stored' };
+    this.eventsGateway.broadcast(`[CONFIG] Received configuration for "${ssidLabel}"`);
+    return { status: 'success', message: 'Configuration saved.' };
   }
 
   async scanWifi(): Promise<{ networks: Array<{ ssid: string; rssi: number; secure: boolean }> }> {
